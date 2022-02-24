@@ -33,14 +33,29 @@ library("plsRglm") # See https://arxiv.org/abs/1810.01005
 #install.packages("tidyverse")
 library("tidyverse") # for tidying up the data set
 
+#install.packages("ggplot2")
 library("ggplot2") # for visualizations
+#install.packages("GGally")
+library("GGally")
+
+#install.packages("corrplot")
+library("corrplot") # for correlation plot
 
 
 #---------------------------------------------------------------
 
 # LOAD THE DATA
-winequality_red = read.csv("data/winequality-red.csv")
-winequality_white = read.csv("data/winequality-white.csv")
+
+# read csv's
+winequality_red <- read.csv("data/winequality-red.csv", sep=';')
+winequality_white <- read.csv("data/winequality-white.csv", sep=';')
+
+# add categorical color variables to both sets
+winequality_red['color'] <- 'red'
+winequality_white['color'] <- 'white'
+
+# merge datasets
+df <- rbind(winequality_red, winequality_white)
 
 # The goal is to use these input variables:
 #   1 - fixed acidity
@@ -63,3 +78,47 @@ winequality_white = read.csv("data/winequality-white.csv")
 
 # EXPLORE THE DATA
 
+str(df)
+
+head(df)
+
+tail(df)
+
+summary(df)
+
+# Let's start exploring the data one variable at a time
+
+#   1 - fixed acidity
+
+#   2 - volatile acidity
+
+#   3 - citric acid
+
+#   4 - residual sugar
+
+#   5 - chlorides
+
+#   6 - free sulfur dioxide
+
+#   7 - total sulfur dioxide
+
+#   8 - density
+
+#   9 - pH
+
+#   10 - sulphates
+
+#   11 - alcohol
+
+#   12 - quality (score between 0 and 10)
+
+summary(df$quality)
+table(df$quality)
+qplot(quality, data = df, fill = color, binwidth = 1) +
+    scale_x_continuous(breaks = seq(3,10,1), lim = c(3,10)) +
+    scale_y_sqrt()
+
+# Now let's look for correlations
+#ggpairs(data)
+
+#exploratory analysis, findings, and reasoning for: data splitting, feature engineering, pre-processing, model building, hyperparameter optimization, model stacking, and withholding set validation
