@@ -41,7 +41,11 @@ library("GGally")
 #install.packages('plsdof')
 library('plsdof') # Necessary for "plsRglm" to work
 
+#install.packages("moments")
+library(moments) # For calculating skewness of distributions
 
+#install.packages("Metrics")
+library("Metrics") # For calculating MAE
 
 #---------------------------------------------------------------
 
@@ -226,30 +230,116 @@ ggpairs(df_cut, columns=1:10, mapping=ggplot2::aes(colour = color), lower=list(c
 # not to such a degree as the outlier that we removed. They seem to simply follow the shape
 # of a long-tailed distribution.
 # This calls for a transformation of the data to make the distributions more normal,
-# specifically in the following variables:
-#
 
+# Calculate skewness of the variables
+for (name in names(df_cut[1:9])) {
+  skew <- skewness(df_cut[name], na.rm = TRUE)
+  print(paste(name,skew))
+}
 
-ggplot(df_cut, aes(x=residual.sugar, y=sulphates, color=as.factor(quality))) +
+# Create a copy of the data frame to transform
+df_transformed <- data.frame(df_cut)
+df_transformed$fixed.acidity <- 1/(df_transformed$fixed.acidity)
+df_transformed$sulphates <- 1/(df_transformed$sulphates)
+df_transformed$volatile.acidity <- sqrt(1/(df_transformed$volatile.acidity))
+df_transformed$residual.sugar <- log10(df_transformed$residual.sugar)
+df_transformed$chlorides <- sqrt(1/(df_transformed$chlorides))
+df_transformed$citric.acid <- sqrt(df_transformed$citric.acid + 0.1)
+df_transformed$total.sulfur.dioxide <- sqrt(df_transformed$total.sulfur.dioxide)
+
+plot_multi_histogram(df_transformed, "volatile.acidity", "color", alpha=0.4, binwidth=0.1)
+plot_multi_histogram(df_transformed, "residual.sugar", "color", alpha=0.4, binwidth=0.1)
+plot_multi_histogram(df_transformed, "chlorides", "color", alpha=0.4, binwidth=2)
+plot_multi_histogram(df_transformed, "citric.acid", "color", alpha=0.4, binwidth=0.05)
+
+for (name in names(df_transformed[1:9])) {
+  skew <- skewness(df_transformed[name], na.rm = TRUE)
+  print(paste(name,skew))
+}
+
+ggplot(df_cut, aes(x=fixed.acidity, y=sulphates, color=as.factor(quality))) +
   geom_point(size=6) + scale_color_brewer(palette = "Spectral")
+
+ggplot(df_transformed, aes(x=fixed.acidity, y=sulphates, color=as.factor(quality))) +
+  geom_point(size=6) + scale_color_brewer(palette = "Spectral")
+
+# Let's look at the correlation plot again because it gives a good view
+# of the entire dataset.
+ggpairs(df_transformed, columns=1:9, mapping=ggplot2::aes(colour = color), lower=list(continuous='points')) + scale_color_manual(values=c("red", "yellow"))
+
 #exploratory analysis, findings, and reasoning for: data splitting, feature engineering, pre-processing, model building, hyperparameter optimization, model stacking, and withholding set validation
 
 
 # cross-validation?
 
-dataY <- df_cut[11]
-dataY <- sapply(dataY, as.numeric)
-dataX <- df_cut[1:10] # leaving out non-numeric color for now.
+# transform the color variable into numeric factors
+df_transformed$color <- factor(df_transformed$color)
 
-# might need some PCA if it doesn't go well.
-
-# model building
-set.seed(314)
+dataY <- factor(df_transformed$quality, ordered=TRUE)
+dataX <- df_transformed[1:9]
+dataX['color'] <- as.numeric(df_transformed$color)
 
 # This command required me to install package 'plsdof'
-plsRglm(as.numeric(dataY),dataX,nt=2,limQ2set=.0975,
-             dataPredictY=dataX,modele="pls",family=NULL,typeVC="none",
-             EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
-             alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),
-             sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+# See https://cran.r-project.org/web/packages/plsRglm/vignettes/plsRglm.pdf 
+# For info about arguments: https://www.rdocumentation.org/packages/plsRglm/versions/1.3.0/topics/plsRglm
+nrow(df_white)
+weight.factor <- nrow(df_red)/nrow(df_white)
+df_transformed$color
+get_weight <- function(color.name) {
+  if (color.name == "white") {
+    return(weight.factor)
+  }
+  return(1.0)
+}
+prior.weights <- sapply(df_transformed$color, get_weight)
 
+# model building
+set.seed(123)
+model_pls <- plsRglm(dataY,dataX,nt=10,limQ2set=.0975,
+             dataPredictY=dataX,modele="pls-glm-polr",family=NULL,typeVC="none",
+             EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+             alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights,
+             sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+model_pls
+table(as.numeric(unlist(dataY)), predictions )
+predictions <- as.numeric(predict(model_pls$FinalModel))
+observations <- as.numeric(dataY)
+mae(observations, predictions)
+plot(observations, predictions)
+
+# Cross validation model
+#cv.modpls <- cv.plsRglm(dataY,dataX,nt=10,modele="pls-glm-polr",NK=5)
+#cv.modpls
+#res.cv.modpls=cvtable(summary(cv.modpls, MClassed = TRUE))
+#plot(res.cv.modpls) # This suggests that 10 is the preferred number of components for the model.
+
+# Let's implement bagging
+number.of.models <- 10
+models <- vector(mode = "list", length = number.of.models) # empty list of models
+# Linear regression models tend to get the same result every time, so making the same model
+# again and again and average the results won't do any good.
+# Let's use a boosting technique. The first model will use the features to try and predict
+# the quality score. The second model will use the features and the 1st model's score
+# to try and predict the true quality score, thus fitting to the difference, and so on.
+# The 1st model has MAE = 0.5144704 with nt=10 and transformed data.
+dataX_2 <- data.frame(dataX)
+dataX_2["prediction1"] <- as.numeric( predict(model_pls$FinalModel) )
+model_pls_2 <- plsRglm(dataY,dataX_2,nt=10,limQ2set=.0975,
+                     dataPredictY=dataX_2,modele="pls-glm-polr",family=NULL,typeVC="none",
+                     EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                     alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights)
+model_pls_2
+predictions <- as.numeric(predict(model_pls_2$FinalModel))
+observations <- as.numeric(dataY)
+mae(observations, predictions) # 0.5115456
+
+dataX_3 <- data.frame(dataX_2)
+dataX_3["prediction1"] <- as.numeric( predict(model_pls_2$FinalModel) )
+model_pls_3 <- plsRglm(dataY,dataX_3,nt=10,limQ2set=.0975,
+                       dataPredictY=dataX_3,modele="pls-glm-polr",family=NULL,typeVC="none",
+                       EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                       alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights)
+model_pls_3
+predictions <- as.numeric(predict(model_pls_3$FinalModel))
+observations <- as.numeric(dataY)
+mae(observations, predictions) # 0.5115456
