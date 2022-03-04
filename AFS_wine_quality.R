@@ -47,6 +47,9 @@ library(moments) # For calculating skewness of distributions
 #install.packages("Metrics")
 library("Metrics") # For calculating MAE
 
+library("stringr") # For regex
+
+
 #---------------------------------------------------------------
 
 # LOAD THE DATA
@@ -343,3 +346,85 @@ model_pls_3
 predictions <- as.numeric(predict(model_pls_3$FinalModel))
 observations <- as.numeric(dataY)
 mae(observations, predictions) # 0.5115456
+
+# Since the plsRglm model is designed to handle high dimensional data with few rows,
+# I'm going to increase the dimensionality of the dataset.
+# This will allow previously nonlinear properties to be described linearly by the
+# plsRglm model. My plan is to bin the features, and every bin will be its own feature.
+
+# I'll transform the points row by row.
+# This section is practice.
+d <- data.frame(x=c(1,2,3),y=c(4,5,6))
+d
+nbins <- 3
+for (feature in names(d)) {
+  # map value of feature to bin number
+  xmin <- 0.99*min(d[feature])
+  xmax <- 1.01*max(d[feature])
+  slope <- nbins/(xmax - xmin)
+  feature.bin <- paste(feature, "bin", sep="")
+  d[feature.bin] <- with(d, floor( slope*( eval(parse(text=feature)) - xmin) ) )
+  
+  # create new feature for each bin
+  for (i in 1:nbins) {
+    new.feature <- paste(feature, as.character(i), sep="")
+    d[new.feature] <- with(d, 
+                           ifelse(eval(parse(text=feature)) < i/slope+xmin & eval(parse(text=feature)) > (i-1)/slope+xmin,
+                                   eval(parse(text=feature)) - xmin - eval(parse(text=feature.bin))/slope,
+                                   0.0
+                                   )
+    )
+      }
+}
+d
+
+# Now let's do it for real:
+dataX_expanded <- data.frame(dataX)
+nbins.default <- 10
+nbins <- nbins.default
+for (feature in names(dataX_expanded)) {
+  if (feature == "color") {
+    nbins <- 2
+  } else {
+    nbins <- nbins.default
+  }
+  # map value of feature to bin number
+  xmin <- 0.99*min(dataX_expanded[feature])
+  xmax <- 1.01*max(dataX_expanded[feature])
+  slope <- nbins/(xmax - xmin)
+  feature.bin <- paste(feature, "bin", sep="")
+  dataX_expanded[feature.bin] <- with(dataX_expanded, floor( slope*( eval(parse(text=feature)) - xmin) ) )
+  
+  # create new feature for each bin
+  for (i in 1:nbins) {
+    new.feature <- paste(feature, as.character(i), sep="")
+    #dataX_expanded[new.feature] <- with(dataX_expanded, 
+    #                      ifelse(eval(parse(text=feature)) < i/slope+xmin & eval(parse(text=feature)) > (i-1)/slope+xmin,
+    #                              eval(parse(text=feature)) - xmin - eval(parse(text=feature.bin))/slope,
+    #                              0.0
+    #                       )
+    #)
+    dataX_expanded[new.feature] <- with(dataX_expanded, 
+                                        ifelse(eval(parse(text=feature)) < i/slope+xmin & eval(parse(text=feature)) > (i-1)/slope+xmin,
+                                               eval(parse(text=feature)),
+                                               0.0
+                                        )
+    )
+  }
+}
+dataX_expanded
+
+# Now remove all the extra columns and just keep x1, x2, ..., x10 for each feature x.
+dataX_final <- dataX_expanded[,grepl(regex("\\d$"),names(dataX_expanded))]
+
+# model building
+set.seed(123)
+model_pls_expanded <- plsRglm(dataY,dataX_final,nt=10,dataPredictY=dataX_final,modele="pls-glm-polr")
+model_pls_expanded
+predictions <- as.numeric(predict(model_pls_expanded$FinalModel))
+observations <- as.numeric(dataY)
+table(as.numeric(unlist(dataY)), predictions )
+mae(observations, predictions)
+plot(observations, predictions)
+
+head(dataX_final)
