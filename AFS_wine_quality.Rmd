@@ -1,0 +1,722 @@
+---
+title: "AFS wine quality project"
+author: "Jared Jay"
+output: html_notebook
+---
+
+## Introduction
+
+This project attempts to fulfill the assignment outlined in https://www.gastrograph.com/blogs/interviewing-data-science-interns.
+
+"Using only partial least squares regression for generalized linear models (the plsRglm package in R), build an ensemble model to predict the quality score given to each wine from the Vinho Verde region of Portugal (see the data bullet in the Requirements section below to download the datasets). The data consists of chemical tests on wines and an overall assessment score averaged from at least three professional wine tasters. This is interesting data for AFS as the lack of consistent preferences among professional tasters is one of the reasons our company exists."
+
+"The rubric for assessment is explained in the Selection Criteria section below. The prediction model should be trained and will be tested on both red and white wine after joining the two datasets. We will split the supplied data into an 80% training set and a 20% hold-out validation set before running your training script with a random seed. We will use mean absolute error as a performance metric."
+
+
+## Load necessary libraries
+
+Several packages needed to be installed in order to use plsRglm. Other packages are loaded for data exploration, tidying, and analysis. The install commands are commented out rather than removed in case they need to be re-installed on another machine.
+
+```{r}
+#install.packages("mvtnorm")
+#install.packages("bipartite")
+
+# Package 'nloptr' must be installed like this: 
+# Download https://github.com/stevengj/nlopt/archive/v2.7.1.tar.gz
+# Extract contents, then enter the directory and type the following command:
+# cmake . && make && sudo make install
+# next type this command:
+# sudo apt install libnlopt-dev
+# Then you can do this:
+#install.packages("nloptr")
+
+# Package 'nloptr' is a prerequisite for 'car'
+#install.packages("car")
+
+# Packages 'mvtnorm', 'bipartite', and 'car' are prerequisites for 'plsRglm'.
+#install.packages("plsRglm")
+library("plsRglm") # See https://arxiv.org/abs/1810.01005 
+
+#install.packages("tidyverse")
+library("tidyverse") # for tidying up the data set
+
+#install.packages("ggplot2")
+library("ggplot2") # for visualizations
+#install.packages("GGally")
+library("GGally")
+
+#install.packages('plsdof')
+library('plsdof') # Necessary for "plsRglm" to work
+
+#install.packages("moments")
+library('moments') # For calculating skewness of distributions
+
+#install.packages("Metrics")
+library("Metrics") # For calculating MAE
+
+library("stringr") # For regex
+```
+
+## Read in the data
+
+The data are stored in two files. One contains information on red wine and the other on white wine. In both cases, values are separated by semicolons. We will read in both files, add a variable describing the color of the wine, and then merge them into one dataframe.
+
+```{r}
+# read csv's
+df.red <- read.csv("data/winequality-red.csv", sep=';')
+df.white <- read.csv("data/winequality-white.csv", sep=';')
+
+# add categorical color variables to both sets
+df.red['color'] <- 'red'
+df.white['color'] <- 'white'
+
+# merge datasets
+df <- rbind(df.white, df.red)
+```
+
+The goal is to use these input variables:
+   1 - fixed.acidity
+   2 - volatile.acidity
+   3 - citric.acid
+   4 - residual.sugar
+   5 - chlorides
+   6 - free.sulfur.dioxide
+   7 - total.sulfur.dioxide
+   8 - density
+   9 - pH
+   10 - sulphates
+   11 - alcohol
+   13 - color
+
+To predict this output variable: 
+   12 - quality (score between 0 and 10)
+
+
+## Explore the data
+
+Let's print out a few things to get an idea of what the data look like:
+
+```{r}
+str(df)
+```
+
+```{r}
+head(df)
+```
+
+```{r}
+tail(df)
+```
+
+```{r}
+summary(df)
+```
+
+Let's now start exploring the data one variable at a time. I've created a function below that will make a plot of two overlapping transparent histograms. It will be useful to compare the distributions for red wine and white wine.
+
+```{r}
+plot_multi_histogram <- function(df, feature, label.column, alpha, binwidth) {
+  plt <- ggplot(df, aes(x=eval(parse(text=feature)), fill=eval(parse(text=label.column)))) +
+    geom_histogram(alpha=alpha, position="identity", color="black", binwidth=binwidth) +
+  #geom_density(alpha=alpha)# +
+  #geom_vline(aes(xintercept=mean(eval(parse(text=feature)))), color="black", linetype="dashed", size=1)# +
+  labs(x=feature, y = "Density")
+  plt + guides(fill=guide_legend(title=label.column))
+}
+```
+
+### fixed.acidity
+```{r}
+#   1 - fixed acidity
+summary(df$fixed.acidity)
+#table(df$fixed.acidity)
+#sort(unique(df$fixed.acidity))
+```
+
+```{r}
+#ggplot(data = df, aes(x=fixed.acidity, fill=color)) + geom_histogram(alpha=0.2, position="identity")
+plot_multi_histogram(df, "fixed.acidity", "color", alpha=0.4, binwidth=1)
+```
+### volatile.acidity
+
+```{r}
+#   2 - volatile acidity
+summary(df$volatile.acidity)
+```
+
+```{r}
+plot_multi_histogram(df, "volatile.acidity", "color", alpha=0.4, binwidth=0.1)
+```
+
+### citric.acid
+
+```{r}
+#   3 - citric acid
+summary(df$citric.acid)
+```
+
+```{r}
+plot_multi_histogram(df, "citric.acid", "color", alpha=0.4, binwidth=0.1)
+```
+
+### residual.sugar
+
+```{r}
+#   4 - residual sugar
+summary(df$residual.sugar)
+```
+
+```{r}
+plot_multi_histogram(df, "residual.sugar", "color", alpha=0.4, binwidth=2)
+```
+
+### chlorides
+
+```{r}
+#   5 - chlorides
+summary(df$chlorides)
+```
+
+```{r}
+plot_multi_histogram(df, "chlorides", "color", alpha=0.4, binwidth=0.01)
+```
+
+### free.sulfur.dioxide
+
+```{r}
+#   6 - free sulfur dioxide
+summary(df$free.sulfur.dioxide)
+```
+
+```{r}
+plot_multi_histogram(df, "free.sulfur.dioxide", "color", alpha=0.4, binwidth=10)
+```
+
+### total.sulfur.dioxide
+
+```{r}
+#   7 - total sulfur dioxide
+summary(df$total.sulfur.dioxide)
+```
+
+```{r}
+plot_multi_histogram(df, "total.sulfur.dioxide", "color", alpha=0.4, binwidth=10)
+```
+
+### density
+
+```{r}
+#   8 - density
+summary(df$density)
+```
+
+```{r}
+plot_multi_histogram(df, "density", "color", alpha=0.4, binwidth=0.001)
+```
+
+### pH
+
+```{r}
+#   9 - pH
+summary(df$pH)
+```
+
+```{r}
+plot_multi_histogram(df, "pH", "color", alpha=0.4, binwidth=0.05)
+```
+
+### sulphates
+
+```{r}
+#   10 - sulphates
+summary(df$sulphates)
+```
+
+```{r}
+plot_multi_histogram(df, "sulphates", "color", alpha=0.4, binwidth=0.1)
+```
+
+### alcohol
+
+```{r}
+#   11 - alcohol
+summary(df$alcohol)
+```
+
+```{r}
+plot_multi_histogram(df, "alcohol", "color", alpha=0.4, binwidth=0.2)
+```
+
+### quality
+
+```{r}
+#   12 - quality (score between 0 and 10)
+summary(df$quality)
+```
+
+```{r}
+plot_multi_histogram(df, "quality", "color", alpha=0.4, binwidth=1)
+```
+
+By looking at the data, we have learned the following:
+
+There is more data on white wine than red wine, so we may need to rescale the data so that the model learns to classify red wine as well as white wine.
+
+Several of the distributions are skewed, indicating the presence of long tails or outliers.
+
+Now let's look for correlations between features in the data with a ggpairs plot.
+
+```{r}
+ggpairs(df, columns=1:12, mapping=ggplot2::aes(colour = color), lower=list(continuous='points')) + scale_color_manual(values=c("red", "yellow"))
+```
+
+The highest correlations we see are the following:
+
+0.721 between free.sulfur.dioxide and total.sulfur.dioxide
+
+0.687 between density and alcohol
+
+0.553 between density and residual.sugar
+
+0.495 between total.sulfur.dioxide and residual.sugar
+
+0.459 between density and fixed.acidity
+
+0.444 between alcohol and quality
+
+0.414 between total.sulfur.dioxide and volatile.acidity
+
+0.403 between free.sulfur.dioxide and residual.sugar
+
+There is also a correlation between pH and volatile.acidity, but it's different between red wine and white wine.
+
+Cleary the alcohol content will be useful for our model because of its relatively high correlation with the wine quality rating (0.444).
+
+We also see some outliers. Let's take a closer look at some of the plots to figure out where these outliers are and if they ought to be removed. The most obvious outlier is the one in residual.sugar and density.
+
+```{r}
+ggplot(df, aes(x=residual.sugar, y=density, color=as.factor(quality))) +
+  geom_point(size=6) + scale_color_brewer(palette = "Spectral")
+```
+
+The maximum has over twice as much sugar as the next largest point. It is also twice as far from the minimum density as the next most dense point. It is clearly an outlier and I believe it is safe to remove it from the data. We'll do this by cutting out all points with residual.sugar > 40. The next largest point is also separated from most of the other points, but more so in density than in residual.sugar. The density is correlated with both alcohol (0.687) and residual.sugar (0.553). I think we can assume that much of the information about the density is included already in the alcohol and sugar variables, so we can remove density from the dataset.
+
+Another outlier is in free.sulfur.dioxide and total.sulfur.dioxide.
+```{r}
+ggplot(df, aes(x=free.sulfur.dioxide, y=total.sulfur.dioxide, color=as.factor(quality))) +
+  geom_point(size=6) + scale_color_brewer(palette = "Spectral")
+```
+
+This point has almost twice as much free sulfur dioxide as the next largest point. However, it is not much of an outlier on the other axis, total.sulfur.dioxide. It also has the minimum quality rating, which means it could have useful predictive power. There is a strong correlation between these two variables (0.721), which means it may be better to simply remove the variable free.sulfur.dioxide from the dataset rather than remove this data point.
+
+Let's apply the changes (remove sugar outlier & remove free.sulfur.dioxide (6) and density (8)).
+
+```{r}
+df.cut <- df[df$residual.sugar < 40, c(1:5, 7, 9:13)]
+```
+
+Now we'll redraw the plots.
+
+```{r}
+ggpairs(df.cut, columns=1:10, mapping=ggplot2::aes(colour = color), lower=list(continuous='points')) + scale_color_manual(values=c("red", "yellow"))
+```
+
+There are still some points that tend to isolate themselves from most of the data, but not to such a degree as the outlier that we removed. They seem to simply follow the shape of a long-tailed distribution. This calls for a transformation of the data to make the distributions more normal.
+
+Let's begin the transformations by first calculating the skewness of the variables.
+
+```{r}
+for (name in names(df.cut[1:9])) {
+  skew <- skewness(df.cut[name], na.rm = TRUE)
+  print(paste(name,skew))
+}
+```
+
+We now create a copy of the dataframe and apply transformations. The functions 1/x, sqrt, and log10 are useful for transforming positively skewed distributions into a more gaussian shape, depending on the severity of the skew. The following transformations give decent distributions.
+
+```{r}
+df.transformed <- data.frame(df.cut)
+df.transformed$fixed.acidity <- 1/(df.transformed$fixed.acidity)
+df.transformed$sulphates <- 1/(df.transformed$sulphates)
+df.transformed$volatile.acidity <- sqrt(1/(df.transformed$volatile.acidity))
+df.transformed$residual.sugar <- log10(df.transformed$residual.sugar)
+df.transformed$chlorides <- sqrt(1/(df.transformed$chlorides))
+df.transformed$citric.acid <- sqrt(df.transformed$citric.acid + 0.1)
+df.transformed$total.sulfur.dioxide <- sqrt(df.transformed$total.sulfur.dioxide)
+```
+
+Let's plot a few histograms to see how normal the new distributions are.
+
+```{r}
+plot_multi_histogram(df.transformed, "volatile.acidity", "color", alpha=0.4, binwidth=0.1)
+```
+
+```{r}
+plot_multi_histogram(df.transformed, "residual.sugar", "color", alpha=0.4, binwidth=0.1)
+```
+
+```{r}
+plot_multi_histogram(df.transformed, "chlorides", "color", alpha=0.4, binwidth=2)
+```
+
+```{r}
+plot_multi_histogram(df.transformed, "citric.acid", "color", alpha=0.4, binwidth=0.05)
+```
+
+We can now calculate the skewness again to see if it has improved.
+
+```{r}
+for (name in names(df.transformed[1:9])) {
+  skew <- skewness(df.transformed[name], na.rm = TRUE)
+  print(paste(name,skew))
+}
+```
+
+We can also plot a few scatter plots to look at two variables at once, to see how the distributions changed after the transformations and look for any more correlations. We can color-code the quality score.
+
+```{r}
+ggplot(df.cut, aes(x=fixed.acidity, y=sulphates, color=as.factor(quality))) +
+  geom_point(size=6) + scale_color_brewer(palette = "Spectral")
+```
+
+```{r}
+ggplot(df.transformed, aes(x=fixed.acidity, y=sulphates, color=as.factor(quality))) +
+  geom_point(size=6) + scale_color_brewer(palette = "Spectral")
+```
+
+In this particular case it looks like the data have become more normally distributed. Let's look at the full correlation plot again because it gives a good view of the entire dataset all at once.
+
+```{r}
+ggpairs(df.transformed, columns=1:10, mapping=ggplot2::aes(colour = color), lower=list(continuous='points')) + scale_color_manual(values=c("red", "yellow"))
+```
+
+The data look very good now. However, there does not seem to be any easy way to predict the quality of the wine. None of the variables have a very high correlation with quality. The colored scatter plots that we have looked at do not have any obvious clustering of quality scores. Any significant correlations with quality must reside in combinations of more that two features, in a very nonlinear way. This makes the required application of a linear model unusual, but let's see what we can do.
+
+## First model attempt
+
+The data appear to be ready for the application of a simple test model to see if we can get the plsRglm package working correctly. Let's transform the color variable into numeric factors and set up our X variables and Y target.
+
+```{r}
+dataY <- factor(df.transformed$quality, ordered=TRUE)
+dataX <- df.transformed[1:9]
+df.transformed$color <- factor(df.transformed$color)
+dataX['color'] <- as.numeric(df.transformed$color)
+```
+
+As stated previously, the data ought to be weighted by color so that the model isn't biased towards white wine. We want it to learn to accurately predict the quality of either color. In this case, the difference in size of the two groups is not extreme, but it is still good practice to be aware of and take care of these issues.
+
+```{r}
+weight.factor <- nrow(df.red)/nrow(df.white)
+get_weight <- function(color.name) {
+  if (color.name == "white") {
+    return(weight.factor)
+  }
+  return(1.0)
+}
+prior.weights <- sapply(df.transformed$color, get_weight)
+```
+
+We now build a model using the required package plsRglm. See https://cran.r-project.org/web/packages/plsRglm/vignettes/plsRglm.pdf for more information on this package and specific applications. More information about the arguments can be found at https://www.rdocumentation.org/packages/plsRglm/versions/1.3.0/topics/plsRglm. We will train on 80% of the data and save 20% for testing later.
+
+```{r}
+N.rows <- nrow(dataX)
+train.fraction <- 0.8
+N.train.rows <- floor(N.rows*train.fraction)
+N.test.rows <- N.rows - N.train.rows
+test.indices <- sample.int(N.rows, N.test.rows) # select N_test_rows randomly
+dataX.test <- dataX[c(test.indices),]
+dataX.train <- dataX[-c(test.indices),]
+dataY.test <- dataY[c(test.indices)]
+dataY.train <- dataY[-c(test.indices)]
+prior.weights.test <- prior.weights[c(test.indices)]
+prior.weights.train <- prior.weights[-c(test.indices)]
+```
+
+```{r}
+set.seed(123)
+model.pls <- plsRglm(dataY.train,dataX.train,nt=10,limQ2set=.0975,
+             dataPredictY=dataX.train,modele="pls-glm-polr",family=NULL,typeVC="none",
+             EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+             alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights.train,
+             sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+model.pls
+```
+
+Let's take a look at how well the model performs in predicting the quality of wines. We compare the predictions and observations with a table, a plot, and a calculation of the Mean Absolute Error (MAE).
+
+```{r}
+predictions.train <- as.numeric(predict(model.pls$FinalModel))
+observations.train <- as.numeric(dataY.train)
+predictions.test <- as.numeric(predict(model.pls, newdata = dataX.test, type="class"))
+observations.test <- as.numeric(dataY.test)
+table(as.numeric(unlist(dataY.train)), predictions.train )
+table(as.numeric(unlist(dataY.test)), predictions.test )
+```
+
+```{r}
+plot(observations.test, predictions.test)
+```
+
+```{r}
+mae(observations.train, predictions.train)
+mae(observations.test, predictions.test)
+```
+
+This is not bad. It's much better than randomly guessing numbers between 3 and 7, in which case I would expect an mae of about 1.8. But still, maybe we can do better.
+
+A cross validation experiment demonstrates that 10 is an appropriate number of components for this model, given the training data. However, this takes a very long time to run. So I'm excluding it from this notebook.
+
+```{r}
+#cv.modpls <- cv.plsRglm(dataY.train,dataX.train,nt=10,modele="pls-glm-polr",NK=5)
+#cv.modpls
+#res.cv.modpls=cvtable(summary(cv.modpls, MClassed = TRUE))
+#plot(res.cv.modpls) # This suggests that 10 is the preferred number of components for the model.
+```
+
+## Ensemble
+
+Let's try to improve the model by implementing an ensemble. Linear regression models are very robust and tend to get the same result every time, so making the same model again and again and averaging the results won't do any good, unlike a random forest which can create thousands of different trees by simply changing the random see. Instead of bagging models together, let's try a boosting technique. The first model will use the features to try and predict the quality score. The second model will use the features and the 1st model's score to try and predict the true quality score, thus fitting to the difference, and so on.
+
+```{r}
+dataX.train.2 <- data.frame(dataX.train)
+dataX.train.2["prediction1"] <- as.numeric( predict(model.pls$FinalModel) )
+dataX.test.2 <- data.frame(dataX.test)
+dataX.test.2["prediction1"] <- as.numeric( predict(model.pls, newdata = dataX.test, type="class") )
+model.pls.2 <- plsRglm(dataY.train,dataX.train.2,nt=10,limQ2set=.0975,
+                     dataPredictY=dataX.train.2,modele="pls-glm-polr",family=NULL,typeVC="none",
+                     EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                     alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights.train)
+model.pls.2
+```
+
+We now calculate the MAE to see how well the second model performed.
+
+```{r}
+predictions.train <- as.numeric(predict(model.pls.2$FinalModel))
+observations.train <- as.numeric(dataY.train)
+predictions.test <- as.numeric(predict(model.pls.2, newdata = dataX.test.2, type="class"))
+observations.test <- as.numeric(dataY.test)
+mae(observations.train, predictions.train)
+mae(observations.test, predictions.test)
+```
+Boosting in this manner offered no significant improvement in the MAE.
+
+We could try a boosted ensemble where we just do one variable at a time and then fit the prediction error with each successive model, but I think that would be just like multivariate regression, but not as good.
+
+Let's continue trying a boosted ensemble with all of the variables, including the result of the previous model to make the next predictions. But instead of trying to fit the quality values at each step, we can try to fit the difference between the quality values and the previous prediction. Let's try it.
+
+```{r}
+number.of.models <- 3
+models.pls <- vector(mode = "list", length = number.of.models) # empty list of models
+errors <- vector(mode = "list", length = number.of.models) # empty list of errors
+predictions <- as.numeric(dataY.train)*0.0
+targets <- as.numeric(dataY.train)
+for (i in 1:number.of.models) {
+  dataX.this <- data.frame(dataX.train)
+  if (i > 1) {
+    dataX.this["prediction1"] <- predictions
+  }
+  targets <- targets - predictions
+  model.this <- plsRglm(targets,dataX.this,nt=10,limQ2set=.0975,
+                       dataPredictY=dataX.this,modele="pls-glm-polr",family=NULL,typeVC="none",
+                       EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                       alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights.train,
+                       sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+  #model_this
+  predictions <- as.numeric(predict(model.this$FinalModel))
+  observations <- as.numeric(targets)
+  errors[i] <- mae(observations, predictions)
+  models_pls[i] <- model_this
+  print(errors[i])
+}
+```
+This is resulting in models that get progressively worse. I see now that I was on the wrong track. The data are too noisy, so by boosting a noisy model I just get an even noisier model. What I can do is bag the models instead, which is what I didn't want to do at first because every model would be the same, but actually that's only true if I use the same data each time. I could split up the dataset into N chunks and fit each one separately, and then I'll use the results all together for the final prediction. But that's basically just multivariate linear regression on the full dataset, only worse.
+
+## Engineering cross-terms for effective polynomial fitting
+
+Let's try another approach. Since the plsRglm model is designed to handle high dimensional data with few rows, I'm going to increase the dimensionality of the dataset. This will allow previously nonlinear quadratic properties to be described linearly by the plsRglm model.
+
+If I think that the relationship between the data and quality is nonlinear then I just need to create nonlinear features. If I want xy in the model instead of just ax + by I can make a column xy by multiplying two columns together. I'll multiply every continuous feature by every other continuous feature to get new quadratic columns.
+
+```{r}
+dataX.nonlinear <- data.frame(dataX)
+for (feature1 in names(dataX.nonlinear[1:9])) {
+  for (feature2 in names(dataX.nonlinear[1:9])) {
+    new.feature <- paste(substring(feature1,1,2), substring(feature2,1,2), sep=".")
+    dataX.nonlinear[new.feature] <- dataX.nonlinear[feature1]*dataX.nonlinear[feature2]
+  }
+}
+```
+
+```{r}
+names(dataX_nonlinear)
+```
+
+I should also separate the red and white wine features, because they appear to be significantly different.
+
+```{r}
+for (feature in names(dataX.nonlinear[c(1:9, 11:91)])) {
+  
+  r.feature <- paste("r", feature, sep=".")
+  w.feature <- paste("w", feature, sep=".")
+  dataX.nonlinear[r.feature] <- with(dataX.nonlinear, 
+                                        ifelse(color == 1,
+                                               eval(parse(text=feature)),
+                                               0.0)
+                                        )
+  dataX.nonlinear[w.feature] <- with(dataX.nonlinear, 
+                                        ifelse(color == 2,
+                                               eval(parse(text=feature)),
+                                               0.0)
+                                        )
+}
+```
+
+Let's look at the new dataframe features.
+
+```{r}
+names(dataX_nonlinear)
+```
+
+Now let's remove all the columns that don't start with r. or w.
+
+```{r}
+dataX.nonlinear.final <- dataX.nonlinear[c(92:271)]
+names(dataX.nonlinear.final)
+```
+
+Now we're ready to fit the data with a model. We no longer need the prior weights because the red and white wines now live in different dimensions of the data.
+
+```{r}
+dataX.nonlinear.test <- dataX.nonlinear.final[c(test.indices),]
+dataX.nonlinear.train <- dataX.nonlinear.final[-c(test.indices),]
+set.seed(123)
+model.nonlinear <- plsRglm(dataY.train,dataX.nonlinear.train,nt=10,limQ2set=.0975,
+                       dataPredictY=dataX.nonlinear.train,modele="pls-glm-polr",family=NULL,typeVC="none",
+                       EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                       alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),
+                       sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+model.nonlinear
+```
+
+Now let's see how well it did.
+
+```{r}
+predictions.train <- as.numeric(predict(model.nonlinear$FinalModel))
+observations.train <- as.numeric(dataY.train)
+predictions.test <- as.numeric(predict(model.nonlinear, newdata = dataX.nonlinear.test, type="class"))
+observations.test <- as.numeric(dataY.test)
+mae(observations.train, predictions.train)
+mae(observations.test, predictions.test)
+```
+
+The MAE has improved slightly, by about 1%. Let's try this again, but restricted to the variables which showed the highest correlation with quality.
+
+```{r}
+for (feature in names(dataX.nonlinear.train)) {
+  feature.cor <- cor(dataX.nonlinear.train[feature], as.numeric(dataY.train))
+  if (abs(feature.cor) > 0.2) {
+    print(feature)
+    print(feature.cor)
+  }
+}
+```
+These are the best correlations we see. They are very low and I don't believe they will be useful. Plus, they are all white wine features.
+
+## Binning into extra dimensions
+
+Let's try another approach. We can bin the features, and let every bin become its own feature. This will create a new dimension, and thus a different fitted slope, for every bin, thus allowing nonlinear features to be described by the linear model.
+
+We now transform the data points row by row into a more sparse dataset of binned features.
+
+```{r}
+dataX.expanded <- data.frame(dataX)
+nbins.default <- 20
+nbins <- nbins.default
+for (feature in names(dataX.expanded)) {
+  if (feature == "color") {
+    nbins <- 2
+  } else {
+    nbins <- nbins.default
+  }
+  # map value of feature to bin number
+  xmin <- 0.99*min(dataX.expanded[feature])
+  xmax <- 1.01*max(dataX.expanded[feature])
+  slope <- nbins/(xmax - xmin)
+  feature.bin <- paste(feature, "bin", sep="")
+  dataX.expanded[feature.bin] <- with(dataX.expanded, floor( slope*( eval(parse(text=feature)) - xmin) ) )
+  
+  # create new feature for each bin
+  for (i in 1:nbins) {
+    new.feature <- paste(feature, as.character(i), sep="")
+    
+    #dataX_expanded[new.feature] <- with(dataX_expanded, 
+    #                      ifelse(eval(parse(text=feature)) < i/slope+xmin & eval(parse(text=feature)) > (i-1)/slope+xmin,
+    #                              eval(parse(text=feature)) - xmin - eval(parse(text=feature.bin))/slope,
+    #                              0.0
+    #                       )
+    #)
+    
+    #dataX_expanded[new.feature] <- with(dataX_expanded, 
+    #                                    ifelse(eval(parse(text=feature)) < i/slope+xmin & eval(parse(text=feature)) > (i-1)/slope+xmin,
+    #                                           eval(parse(text=feature)),
+    #                                           0.0
+    #                                    )
+    #)
+    
+    dataX.expanded[new.feature] <- with(dataX.expanded, 
+                                        ifelse(eval(parse(text=feature)) < i/slope+xmin & eval(parse(text=feature)) > (i-1)/slope+xmin,
+                                               1,
+                                               0.0
+                                        )
+    )
+  }
+}
+dataX.expanded
+```
+
+We then remove all the extra columns and just keep x1, x2, ..., x10 for each feature x.
+
+```{r}
+dataX.binned <- dataX.expanded[,grepl(regex("\\d$"),names(dataX.expanded))]
+dataX.binned
+```
+
+We also need to remove the columns that contain only zeroes, because they cause problems in the application of the model.
+
+```{r}
+means <- sapply(dataX.binned, mean)
+dataX.final <- dataX.binned[which(means > 0)]
+dataX.final
+```
+
+Now we are ready to fit the data with the plsRglm model.
+
+```{r}
+set.seed(123)
+model.pls.expanded <- plsRglm(dataY,dataX.final,nt=10,dataPredictY=dataX.final,modele="pls-glm-polr")
+model.pls.expanded
+```
+
+Next, we evaluate the model's performance like before.
+
+```{r}
+predictions <- as.numeric(predict(model_pls_expanded$FinalModel))
+observations <- as.numeric(dataY)
+table(as.numeric(unlist(dataY)), predictions )
+```
+
+```{r}
+plot(observations, predictions)
+```
+
+```{r}
+mae(observations, predictions)
+```
+
+This is the best MAE that I've seen so far, but I don't think it's good enough to justify the amount of effort we put into it and the long time it took to run it. It will also be difficult to expand the model to incorporate new data, since we removed many columns of zeros before fitting.
+
+## Conclusion
+
+In conclusion, I would say that the most accurate and robust method that I have found is that of multiplying columns together to effectively turn the plsRglm model into a polynomial model. This method performed better than a simple plsRglm model and can easily be applied to new data. It could probably be improved further by engineering cubic and quartic terms, but the number of features would increase correspondingly and it would take much longer to run. I implemented the quadratic model in the script AFS_wine_quality_model_function.R. At this point, no ensemble method is applied.
+

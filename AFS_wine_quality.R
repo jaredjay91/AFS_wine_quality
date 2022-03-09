@@ -316,9 +316,8 @@ plot(observations, predictions)
 #res.cv.modpls=cvtable(summary(cv.modpls, MClassed = TRUE))
 #plot(res.cv.modpls) # This suggests that 10 is the preferred number of components for the model.
 
-# Let's implement bagging
-number.of.models <- 10
-models <- vector(mode = "list", length = number.of.models) # empty list of models
+# Let's implement an ensemble
+
 # Linear regression models tend to get the same result every time, so making the same model
 # again and again and average the results won't do any good.
 # Let's use a boosting technique. The first model will use the features to try and predict
@@ -380,7 +379,7 @@ d
 
 # Now let's do it for real:
 dataX_expanded <- data.frame(dataX)
-nbins.default <- 10
+nbins.default <- 30
 nbins <- nbins.default
 for (feature in names(dataX_expanded)) {
   if (feature == "color") {
@@ -393,7 +392,8 @@ for (feature in names(dataX_expanded)) {
   xmax <- 1.01*max(dataX_expanded[feature])
   slope <- nbins/(xmax - xmin)
   feature.bin <- paste(feature, "bin", sep="")
-  dataX_expanded[feature.bin] <- with(dataX_expanded, floor( slope*( eval(parse(text=feature)) - xmin) ) )
+  dataX_expanded[feature.bin] <- with(dataX_expanded, 1)
+  #dataX_expanded[feature.bin] <- with(dataX_expanded, floor( slope*( eval(parse(text=feature)) - xmin) ) )
   
   # create new feature for each bin
   for (i in 1:nbins) {
@@ -415,11 +415,16 @@ for (feature in names(dataX_expanded)) {
 dataX_expanded
 
 # Now remove all the extra columns and just keep x1, x2, ..., x10 for each feature x.
-dataX_final <- dataX_expanded[,grepl(regex("\\d$"),names(dataX_expanded))]
+dataX_binned <- dataX_expanded[,grepl(regex("\\d$"),names(dataX_expanded))]
+summary(dataX_binned)
+# Remove columns that are all zero, because the model doesn't like them.
+means <- sapply(dataX_binned, mean)
+dataX_final <- dataX_binned[which(means > 0)]
+summary(dataX_final)
 
 # model building
 set.seed(123)
-model_pls_expanded <- plsRglm(dataY,dataX_final,nt=10,dataPredictY=dataX_final,modele="pls-glm-polr")
+model_pls_expanded <- plsRglm(dataY,dataX_final,nt=20,dataPredictY=dataX_final,modele="pls-glm-polr")
 model_pls_expanded
 predictions <- as.numeric(predict(model_pls_expanded$FinalModel))
 observations <- as.numeric(dataY)
@@ -428,3 +433,43 @@ mae(observations, predictions)
 plot(observations, predictions)
 
 head(dataX_final)
+
+# Let's try a boosted ensemble where we just do one variable at a time and then fit the prediction error with each successive model.
+number.of.models <- length(dataX)
+datasets <- vector(mode = "list", length = number.of.models) # empty list of datasets
+models <- vector(mode = "list", length = number.of.models) # empty list of models
+errors <- vector(mode = "list", length = number.of.models) # empty list of errors
+predictions <- as.numeric(dataY)*0.0
+targets <- as.numeric(dataY)
+for (i in 1:3) {
+  targets <- targets - predictions
+  model_this <- plsRglm(targets,dataX[i],nt=1,limQ2set=.0975,
+                       dataPredictY=dataX[i],modele="pls-glm-polr",family=NULL,typeVC="none",
+                       EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                       alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights,
+                       sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+  #model_this
+  predictions <- as.numeric(predict(model_this$FinalModel))
+  observations <- as.numeric(targets)
+  errors[i] <- mae(observations, predictions)
+  print(errors[i])
+}
+error_this
+errors[2] <- mae(observations, predictions)
+dataX_subset <- data.frame(dataX[1:3])
+dataX_subset
+models_1 <- plsRglm(dataY,as.numeric(dataX_subset))
+
+set.seed(123)
+dataX_this <- dataX[2]
+model_pls <- plsRglm(dataY,dataX_this,nt=1,limQ2set=.0975,
+                     dataPredictY=dataX_this,modele="pls-glm-polr",family=NULL,typeVC="none",
+                     EstimXNA=FALSE,scaleX=TRUE,scaleY=NULL,pvals.expli=FALSE,
+                     alpha.pvals.expli=.05,MClassed=FALSE,tol_Xi=10^(-12),weights=prior.weights,
+                     sparse=FALSE,sparseStop=TRUE,naive=FALSE,verbose=TRUE)
+model_pls
+table(as.numeric(unlist(dataY)), predictions )
+predictions <- as.numeric(predict(model_pls$FinalModel))
+observations <- as.numeric(dataY)
+mae(observations, predictions)
+plot(observations, predictions)
